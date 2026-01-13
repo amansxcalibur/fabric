@@ -44,35 +44,70 @@ class CircularScale(CircularProgressBar):
         **kwargs,
     ):
         self.cap_delta = cap_delta
-        super().__init__(
-            value=value,
-            min_value=min_value,
-            max_value=max_value,
-            start_angle=start_angle,
-            end_angle=end_angle,
-            line_width=line_width,
-            line_style=line_style,
-            pie=pie,
-            invert=invert,
-            child=child,
-            name=name,
-            visible=visible,
-            all_visible=all_visible,
-            style=style,
-            style_classes=style_classes,
-            tooltip_text=tooltip_text,
-            tooltip_markup=tooltip_markup,
-            h_align=h_align,
-            v_align=v_align,
-            h_expand=h_expand,
-            v_expand=v_expand,
-            size=size,
+        CircularProgressBar.__init__(
+            self,
+            value,
+            min_value,
+            max_value,
+            start_angle,
+            end_angle,
+            line_width,
+            line_style,
+            pie,
+            invert,
+            child,
+            name,
+            visible,
+            all_visible,
+            style,
+            style_classes,
+            tooltip_text,
+            tooltip_markup,
+            h_align,
+            v_align,
+            h_expand,
+            v_expand,
+            size,
             **kwargs,
         )
         # gadgets
+        self._highlight_ctx = self.do_create_gadget_context("highlight")
         self._trough_ctx = self.do_create_gadget_context("trough")
         self._slider_ctx = self.do_create_gadget_context("slider")
-        self._highlight_ctx = self.do_create_gadget_context("highlight")
+        self.gadget_contexts = [[self._trough_ctx, 'trough'], [self._highlight_ctx, 'highlight'], [self._slider_ctx, 'slider']]
+        for context in [self._trough_ctx, self._highlight_ctx, self._slider_ctx]:
+            context.set_screen(self.get_screen())
+
+    def do_create_gadget_context(self, node_name: str) -> Gtk.StyleContext:
+        ctx = Gtk.StyleContext()
+        ctx.set_parent(self.get_style_context())
+        ctx.set_screen(self.get_screen())
+        
+        def update_path(context):
+            parent_ctx = self.get_style_context()
+            new_path = parent_ctx.get_path().copy()
+            
+            # GTK's WidgetPath only includes style classes if CSS rules target them.
+            # If there are selectors targeting child nodes with parent classes
+            # (e.g., "circle-widget.dark slider {...}") but no rules directly targeting 
+            # the parent with that class (e.g., "circle-widget.dark {...}"), the parent's
+            # path won't include the class. This solution manually adds these classes to
+            # the parent's path so the selectors can match correctly.
+            for cls in parent_ctx.list_classes():
+                if not new_path.iter_has_class(-1, cls):
+                    new_path.iter_add_class(-1, cls)
+
+            new_path.append_type(GObject.TYPE_NONE)
+            new_path.iter_set_object_name(-1, node_name) 
+            
+            context.set_path(new_path)
+            context.set_state(self.get_state_flags())
+            self.queue_draw()
+
+        ctx.connect('changed', lambda *_: update_path(ctx))
+        
+        update_path(ctx)
+        return ctx
 
     def do_get_border_width(
         self, context: Gtk.StyleContext, state: Gtk.StateFlags
@@ -116,9 +151,9 @@ class CircularScale(CircularProgressBar):
         center_y: float,
         radius: float,
         start_angle: float,
-        progress_thickness: float,
         progress_angle: float,
         progress_color: Gdk.RGBA,
+        progress_thickness: float,
         slider_thickness_angle: float,
         left_gap_angle: float,
     ) -> None:
@@ -241,18 +276,6 @@ class CircularScale(CircularProgressBar):
         cr.arc(center_x, center_y, radius, mid_angle, mid_angle + delta)
         cr.stroke()
 
-    def do_create_gadget_context(self, node_name: str) -> Gtk.StyleContext:
-        ctx = Gtk.StyleContext()
-        ctx.set_parent(self.get_style_context())  # type: ignore
-
-        path = self.get_style_context().get_path().copy()  # type: ignore
-        path.append_type(GObject.TYPE_NONE)
-        path.iter_set_object_name(-1, node_name)
-
-        ctx.connect("changed", lambda _: self.queue_draw())
-        ctx.set_path(path)  # type: ignore
-        return ctx
-
     def do_draw_rounded_rect(
         self,
         cr: cairo.Context,
@@ -312,6 +335,8 @@ class CircularScale(CircularProgressBar):
         cr.close_path()
 
     def do_draw(self, cr: cairo.Context) -> None:
+        # print("im drawing")
+        # cr.save()
         state = self.get_state_flags()
         style_context = self.get_style_context()
 
@@ -373,41 +398,41 @@ class CircularScale(CircularProgressBar):
 
         # exposed for override
         self.do_draw_progress_arc(
-            cr=cr,
-            center_x=center_x,
-            center_y=center_y,
-            radius=safe_radius,
-            start_angle=start_angle,
-            progress_angle=progress_angle,
-            progress_color=progress_color,
-            progress_thickness=progress_thickness,
-            slider_thickness_angle=slider_thickness_angle,
-            left_gap_angle=left_gap_angle,
+            cr,
+            center_x,
+            center_y,
+            safe_radius,
+            start_angle,
+            progress_angle,
+            progress_color,
+            progress_thickness,
+            slider_thickness_angle,
+            left_gap_angle,
         )
 
         self.do_draw_slider(
-            cr=cr,
-            center_x=center_x,
-            center_y=center_y,
-            radius=safe_radius,
-            progress_angle=progress_angle,
-            slider_color=slider_color,
-            slider_thickness_angle=slider_thickness_angle,
-            slider_height=slider_height,
-            corner_radius=corner_radius,
+            cr,
+            center_x,
+            center_y,
+            safe_radius,
+            progress_angle,
+            slider_color,
+            slider_thickness_angle,
+            slider_height,
+            corner_radius,
         )
 
         self.do_draw_trough_arc(
-            cr=cr,
-            center_x=center_x,
-            center_y=center_y,
-            radius=safe_radius,
-            progress_angle=progress_angle,
-            real_end_angle=real_end_angle,
-            trough_color=trough_color,
-            trough_thickness=trough_thickness,
-            slider_thickness_angle=slider_thickness_angle,
-            right_gap_angle=right_gap_angle,
+            cr,
+            center_x,
+            center_y,
+            safe_radius,
+            progress_angle,
+            real_end_angle,
+            trough_color,
+            trough_thickness,
+            slider_thickness_angle,
+            right_gap_angle,
         )
 
         # draw child (if any)
