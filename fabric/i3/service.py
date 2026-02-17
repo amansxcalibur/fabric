@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import socket
 import struct
 from enum import IntEnum
@@ -101,8 +102,7 @@ class I3(Service):
 
         self.event_socket_thread = GLib.Thread.new(
             "i3-socket-service",
-            self.event_socket_task,  # type: ignore
-            self.SOCKET_PATH,
+            self.main_event_loop,  # type: ignore
         )
 
         self._ready = True
@@ -189,33 +189,55 @@ class I3(Service):
 
         return I3Reply(command=command, reply=reply_data, is_ok=is_ok)
 
-    def event_socket_task(self, socket_addr: str) -> bool:
-        try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.connect(socket_addr)
+    
+    def main_event_loop(self):
+        while True:
+            try:
+                path = self.lookup_socket()
+                self.event_socket_task(path)
 
-                # subscribe to all events
-                sock.sendall(
-                    self.pack(
-                        I3MessageType.SUBSCRIBE,
-                        json.dumps(
-                            [
-                                evnt_name.replace("_event", "")
-                                for mt in I3MessageType
-                                if (evnt_name := mt.name.lower()).endswith("_event")
-                            ]
-                        ),
-                    )
-                )
-                self.unpack(sock)  # success reply
+            except (I3SocketError, ConnectionError) as e:
+                logger.warning(f"[I3Service] socket connection error: {e}")
+            except Exception as e:
+                logger.warning(f"[I3Service] events socket thread ended with an error: {e}")
 
-                while True:
-                    idle_add(self.handle_raw_event, *self.unpack(sock))
-
-        except Exception as e:
-            logger.warning(f"[I3Service] events socket thread ended with an error: {e}")
+            if not self._wait_for_socket():
+                logger.error(f"[I3Service] failed to connect to socket")
+                break
 
         return False
+
+    def event_socket_task(self, socket_addr: str) -> bool:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.connect(socket_addr)
+
+            # subscribe to all events
+            sock.sendall(
+                self.pack(
+                    I3MessageType.SUBSCRIBE,
+                    json.dumps(
+                        [
+                            evnt_name.replace("_event", "")
+                            for mt in I3MessageType
+                            if (evnt_name := mt.name.lower()).endswith("_event")
+                        ]
+                    ),
+                )
+            )
+            self.unpack(sock)  # success reply
+
+            while True:
+                idle_add(self.handle_raw_event, *self.unpack(sock))
+    
+    def _wait_for_socket(self)->bool:
+        socket_path_exists = False
+        for tries in range(0, 500):
+            socket_path_exists = os.path.exists(self.lookup_socket())
+            if socket_path_exists:
+                break
+            time.sleep(0.001)
+
+        return socket_path_exists
 
     def handle_raw_event(self, message_type: int, payload: str):
         event_data = json.loads(payload)
