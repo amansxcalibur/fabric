@@ -70,8 +70,8 @@ class CircularScale(CircularProgressBar):
             size,
             **kwargs,
         )
+        self._cached_style: dict = {}
         self._gadget_classes: dict[Gtk.StyleContext, frozenset[str] | None] = {}
-
         # gadgets
         self._highlight_ctx = self.do_create_gadget_context("highlight")
         self._trough_ctx = self.do_create_gadget_context("trough")
@@ -90,7 +90,6 @@ class CircularScale(CircularProgressBar):
 
     def do_update_gadget_path(self, context: Gtk.StyleContext, node_name: str) -> None:
         parent_ctx = self.get_style_context()
-        new_path = parent_ctx.get_path().copy()
         current_classes = frozenset(parent_ctx.list_classes())
 
         # GTK's WidgetPath only includes style classes if CSS rules target them.
@@ -101,16 +100,37 @@ class CircularScale(CircularProgressBar):
         # the parent's path so the selectors can match correctly.
         if current_classes != self._gadget_classes[context]:
             self._gadget_classes[context] = current_classes
-            for cls in current_classes:
-                if not new_path.iter_has_class(-1, cls):
-                    new_path.iter_add_class(-1, cls)
+            new_path = parent_ctx.get_path().copy()
+            new_path.append_for_widget(self)  # copies name + classes
             new_path.append_type(GObject.TYPE_NONE)
             new_path.iter_set_object_name(-1, node_name)
             context.set_path(new_path)
 
-        # TODO: add independent state support for each sub-node
+        # TODO: add independent state support for each sub-node. We don't have 
+        # any state based styles implemented.
         context.set_state(self.get_state_flags())
+        self._cached_style.clear()
         self.queue_draw()
+
+    def do_resolve_style(self) -> dict:
+        if self._cached_style:
+            return self._cached_style
+        
+        state = self.get_state_flags()
+        self._cached_style = {
+            "slider_color": self._slider_ctx.get_background_color(state),
+            "slider_height": self._slider_ctx.get_property("min-height", state),
+            "slider_thickness": self._slider_ctx.get_property("min-width", state),
+            "left_gap": self._slider_ctx.get_property("margin-left", state),
+            "right_gap": self._slider_ctx.get_property("margin-right", state),
+            "corner_radius": self._slider_ctx.get_property("border-radius", state),
+            "progress_color": self._highlight_ctx.get_background_color(state),
+            "progress_thickness": self.do_get_border_width(self._highlight_ctx, state),
+            "trough_color": self._trough_ctx.get_background_color(state),
+            "trough_thickness": self.do_get_border_width(self._trough_ctx, state),
+            "background_color": self.get_style_context().get_background_color(state),
+        }
+        return self._cached_style
 
     def do_get_border_width(
         self, context: Gtk.StyleContext, state: Gtk.StateFlags
@@ -338,10 +358,9 @@ class CircularScale(CircularProgressBar):
         cr.close_path()
 
     def do_draw(self, cr: cairo.Context) -> None:
-        state = self.get_state_flags()
-        style_context = self.get_style_context()
+        styles = self.do_resolve_style()
 
-        background_color = style_context.get_background_color(state)  # type: ignore
+        background_color = styles['background_color']  # type: ignore
 
         width = self.get_allocated_width()
         height = self.get_allocated_height()
@@ -349,20 +368,20 @@ class CircularScale(CircularProgressBar):
         center_y = height / 2
 
         # slider properties
-        slider_color = self._slider_ctx.get_background_color(state)  # type: ignore
-        slider_height = self._slider_ctx.get_property("min-height", state)  # type: ignore
-        slider_thickness = self._slider_ctx.get_property("min-width", state)  # type: ignore
-        left_gap = self._slider_ctx.get_property("margin-left", state)  # type: ignore
-        right_gap = self._slider_ctx.get_property("margin-right", state)  # type: ignore
-        corner_radius = self._slider_ctx.get_property("border-radius", state)  # type: ignore
+        slider_color = styles['slider_color']
+        slider_height = styles['slider_height']
+        slider_thickness = styles['slider_thickness']
+        left_gap = styles['left_gap']
+        right_gap = styles['right_gap']
+        corner_radius = styles['corner_radius']
 
         # progress (highlight) properties
-        progress_color = self._highlight_ctx.get_background_color(state)  # type: ignore
-        progress_thickness = self.do_get_border_width(self._highlight_ctx, state)
+        progress_color = styles['progress_color']
+        progress_thickness = styles["progress_thickness"]
 
         # trough properties
-        trough_color = self._trough_ctx.get_background_color(state)  # type: ignore
-        trough_thickness = self.do_get_border_width(self._trough_ctx, state)
+        trough_color = styles['trough_color']
+        trough_thickness = styles["trough_thickness"]
 
         # calculate radius
         radius = self.do_calculate_radius()
