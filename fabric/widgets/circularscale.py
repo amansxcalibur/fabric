@@ -70,6 +70,8 @@ class CircularScale(CircularProgressBar):
             size,
             **kwargs,
         )
+        self._gadget_classes: dict[Gtk.StyleContext, frozenset[str] | None] = {}
+
         # gadgets
         self._highlight_ctx = self.do_create_gadget_context("highlight")
         self._trough_ctx = self.do_create_gadget_context("trough")
@@ -79,33 +81,35 @@ class CircularScale(CircularProgressBar):
         ctx = Gtk.StyleContext()
         ctx.set_parent(self.get_style_context())
         ctx.set_screen(self.get_screen())
+        self._gadget_classes[ctx] = None
 
-        ctx.connect('changed', lambda *_: self.do_update_gadget_path(ctx, node_name))
-        
+        ctx.connect("changed", lambda *_: self.do_update_gadget_path(ctx, node_name))
+
         self.do_update_gadget_path(ctx, node_name)
         return ctx
-    
+
     def do_update_gadget_path(self, context: Gtk.StyleContext, node_name: str) -> None:
         parent_ctx = self.get_style_context()
         new_path = parent_ctx.get_path().copy()
-        
+        current_classes = frozenset(parent_ctx.list_classes())
+
         # GTK's WidgetPath only includes style classes if CSS rules target them.
         # If there are selectors targeting child nodes with parent classes
-        # (e.g., "circle-widget.dark slider {...}") but no rules directly targeting 
+        # (e.g., "circle-widget.dark slider {...}") but no rules directly targeting
         # the parent with that class (e.g., "circle-widget.dark {...}"), the parent's
         # path won't include the class. This solution manually adds these classes to
         # the parent's path so the selectors can match correctly.
-        for cls in parent_ctx.list_classes():
-            if not new_path.iter_has_class(-1, cls):
-                new_path.iter_add_class(-1, cls)
+        if current_classes != self._gadget_classes[context]:
+            self._gadget_classes[context] = current_classes
+            for cls in current_classes:
+                if not new_path.iter_has_class(-1, cls):
+                    new_path.iter_add_class(-1, cls)
+            new_path.append_type(GObject.TYPE_NONE)
+            new_path.iter_set_object_name(-1, node_name)
+            context.set_path(new_path)
 
-        new_path.append_type(GObject.TYPE_NONE)
-        new_path.iter_set_object_name(-1, node_name) 
-        
-        context.set_path(new_path)
         # TODO: add independent state support for each sub-node
         context.set_state(self.get_state_flags())
-
         self.queue_draw()
 
     def do_get_border_width(
